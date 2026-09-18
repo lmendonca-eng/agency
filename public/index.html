@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GSC Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f0f2f5;--surface:#fff;--surface-hover:#f8f9fb;
+  --primary:#2554e8;--primary-light:#eef2ff;--primary-dark:#1d3fc7;
+  --emerald:#0d9468;--emerald-light:#ecfdf5;
+  --amber:#c27803;--amber-light:#fffbeb;
+  --red:#dc2626;--red-light:#fef2f2;
+  --text:#1a2035;--text-secondary:#525e75;--text-muted:#8993a4;
+  --border:#e2e5eb;--border-light:#eef0f4;
+  --radius:10px;--radius-sm:6px;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:0 4px 12px rgba(0,0,0,.07);
+  --font-ui:'Inter',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono','Fira Code',monospace;
+}
+html{font-size:15px}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--text);line-height:1.55;min-height:100vh}
+
+/* --- Layout --- */
+.app-shell{max-width:1200px;margin:0 auto;padding:1.2rem 1.5rem 3rem}
+header{display:flex;align-items:center;justify-content:space-between;padding:1rem 0;margin-bottom:.3rem}
+.logo{font-size:1.15rem;font-weight:700;letter-spacing:-.02em;color:var(--text)}
+.logo span{color:var(--primary)}
+.user-bar{display:flex;align-items:center;gap:.75rem}
+.user-bar img{width:30px;height:30px;border-radius:50%}
+.user-bar .name{font-size:.85rem;color:var(--text-secondary)}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem 1rem;border:none;border-radius:var(--radius-sm);font-family:var(--font-ui);font-size:.85rem;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark)}
+.btn-ghost{background:transparent;color:var(--text-secondary);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--surface-hover)}
+
+/* --- Login screen --- */
+.login-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center}
+.login-screen h1{font-size:2rem;font-weight:700;letter-spacing:-.03em;margin-bottom:.5rem}
+.login-screen p{color:var(--text-secondary);margin-bottom:2rem;max-width:400px;line-height:1.6}
+.btn-google{background:#fff;color:var(--text);border:1px solid var(--border);padding:.65rem 1.5rem;font-size:.95rem;box-shadow:var(--shadow)}
+.btn-google:hover{box-shadow:var(--shadow-md)}
+.btn-google svg{width:20px;height:20px}
+
+/* --- Site picker & tabs --- */
+.controls-bar{display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap}
+.site-select{font-family:var(--font-ui);font-size:.85rem;padding:.45rem .75rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);min-width:240px;cursor:pointer}
+.period-select{font-family:var(--font-ui);font-size:.85rem;padding:.45rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)}
+.tab-bar{display:flex;gap:2px;background:var(--border-light);border-radius:var(--radius);padding:3px;margin-bottom:1.5rem}
+.tab-btn{flex:1;padding:.55rem 1rem;border:none;background:transparent;border-radius:calc(var(--radius) - 2px);font-family:var(--font-ui);font-size:.85rem;font-weight:500;color:var(--text-muted);cursor:pointer;transition:all .15s}
+.tab-btn.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+
+/* --- Cards & metrics --- */
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
+.metric-card{background:var(--surface);border-radius:var(--radius);padding:1rem 1.2rem;box-shadow:var(--shadow)}
+.metric-card .label{font-size:.75rem;color:var(--text-muted);margin-bottom:.4rem;font-weight:500}
+.metric-card .value{font-family:var(--font-mono);font-size:1.5rem;font-weight:600;letter-spacing:-.02em}
+.metric-card .change{font-size:.75rem;font-weight:500;margin-top:.3rem}
+.metric-card .change.up{color:var(--emerald)}
+.metric-card .change.down{color:var(--red)}
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:1.2rem;margin-bottom:1rem}
+.card-title{font-size:.85rem;font-weight:600;margin-bottom:1rem;color:var(--text)}
+.chart-wrap{position:relative;height:280px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+
+/* --- Tables --- */
+.data-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.data-table th{text-align:left;font-weight:500;color:var(--text-muted);padding:.5rem .6rem;border-bottom:1px solid var(--border)}
+.data-table th.num,.data-table td.num{text-align:right;font-family:var(--font-mono);font-size:.8rem}
+.data-table td{padding:.55rem .6rem;border-bottom:1px solid var(--border-light);color:var(--text-secondary)}
+.data-table tr:last-child td{border-bottom:none}
+.data-table .query-text{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.data-table .page-text{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:.78rem}
+
+/* --- Opportunity badges --- */
+.opp-section{margin-bottom:1.5rem}
+.opp-section h3{font-size:.9rem;font-weight:600;margin-bottom:.3rem}
+.opp-section .desc{font-size:.78rem;color:var(--text-muted);margin-bottom:.8rem;line-height:1.5}
+.badge{display:inline-block;font-size:.7rem;font-weight:600;padding:.15rem .5rem;border-radius:20px}
+.badge-green{background:var(--emerald-light);color:var(--emerald)}
+.badge-amber{background:var(--amber-light);color:var(--amber)}
+.badge-red{background:var(--red-light);color:var(--red)}
+
+/* --- States --- */
+.loading{display:flex;align-items:center;justify-content:center;padding:4rem;color:var(--text-muted);font-size:.9rem}
+.spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .6s linear infinite;margin-right:.6rem}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:.9rem}
+
+/* --- Responsive --- */
+@media(max-width:768px){
+  .metric-grid{grid-template-columns:repeat(2,1fr)}
+  .two-col{grid-template-columns:1fr}
+  .controls-bar{flex-direction:column;align-items:stretch}
+  .site-select{min-width:auto}
+}
+@media(max-width:480px){
+  .app-shell{padding:1rem}
+  .metric-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <header>
+    <div class="logo">GSC <span>Explorer</span></div>
+    <div id="user-area"></div>
+  </header>
+  <main id="main"></main>
+</div>
+
+<script>
+// --- State ---
+const state = { user: null, sites: [], site: '', days: 28, tab: 'dashboard', cache: {} };
+
+// --- API ---
+async function api(path) {
+  const res = await fetch(path);
+  if (res.status === 401) { state.user = null; render(); return null; }
+  return res.json();
+}
+
+// --- Init ---
+async function init() {
+  const data = await api('/api/auth/user');
+  if (data?.authenticated) {
+    state.user = data;
+    const sitesData = await api('/api/sites');
+    state.sites = (sitesData?.sites || []).sort((a,b) => a.siteUrl.localeCompare(b.siteUrl));
+    if (state.sites.length) state.site = state.sites[0].siteUrl;
+  }
+  render();
+  if (state.user && state.site) loadTab();
+}
+
+// --- Render ---
+function render() {
+  document.getElementById('user-area').innerHTML = state.user
+    ? `<div class="user-bar">
+        ${state.user.picture ? `<img src="${state.user.picture}" alt="">` : ''}
+        <span class="name">${state.user.name || state.user.email}</span>
+        <a href="/api/auth/logout" class="btn btn-ghost">Sign out</a>
+       </div>`
+    : '';
+  if (!state.user) {
+    document.getElementById('main').innerHTML = `
+      <div class="login-screen">
+        <h1>GSC Explorer</h1>
+        <p>Connect your Google account to explore Search Console data, track performance, and discover content opportunities.</p>
+        <a href="/api/auth/login" class="btn btn-google">
+          <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign in with Google
+        </a>
+      </div>`;
+    return;
+  }
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="controls-bar">
+      <select class="site-select" id="site-sel">${state.sites.map(s =>
+        `<option value="${s.siteUrl}" ${s.siteUrl===state.site?'selected':''}>${s.siteUrl}</option>`
+      ).join('')}</select>
+      <select class="period-select" id="period-sel">
+        <option value="7" ${state.days===7?'selected':''}>Last 7 days</option>
+        <option value="28" ${state.days===28?'selected':''}>Last 28 days</option>
+        <option value="90" ${state.days===90?'selected':''}>Last 90 days</option>
+      </select>
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn ${state.tab==='dashboard'?'active':''}" data-tab="dashboard">Dashboard</button>
+      <button class="tab-btn ${state.tab==='report'?'active':''}" data-tab="report">Report</button>
+      <button class="tab-btn ${state.tab==='opportunities'?'active':''}" data-tab="opportunities">Opportunities</button>
+    </div>
+    <div id="tab-content"><div class="loading"><div class="spinner"></div>Loading data…</div></div>
+  `;
+  document.getElementById('site-sel').addEventListener('change', e => { state.site = e.target.value; state.cache = {}; loadTab(); });
+  document.getElementById('period-sel').addEventListener('change', e => { state.days = +e.target.value; state.cache = {}; loadTab(); });
+  main.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => {
+    state.tab = btn.dataset.tab; render(); loadTab();
+  }));
+}
+
+// --- Load tab data ---
+async function loadTab() {
+  const el = document.getElementById('tab-content');
+  if (!el) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Loading data…</div>';
+  const key = `${state.tab}-${state.site}-${state.days}`;
+  if (!state.cache[key]) {
+    const endpoint = state.tab === 'dashboard' ? 'dashboard'
+      : state.tab === 'report' ? 'report' : 'opportunities';
+    state.cache[key] = await api(`/api/${endpoint}?site=${encodeURIComponent(state.site)}&days=${state.days}`);
+  }
+  const data = state.cache[key];
+  if (!data) return;
+  if (state.tab === 'dashboard') renderDashboard(data);
+  else if (state.tab === 'report') renderReport(data);
+  else renderOpportunities(data);
+}
+
+// --- Formatting ---
+function fmtNum(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : Math.round(n).toLocaleString(); }
+function fmtCtr(n) { return (n*100).toFixed(1)+'%'; }
+function fmtPos(n) { return n.toFixed(1); }
+function pctChange(curr, prev) {
+  if (!prev) return { text: '—', cls: '' };
+  const pct = ((curr - prev) / prev * 100).toFixed(1);
+  return { text: (pct > 0 ? '+' : '') + pct + '%', cls: pct > 0 ? 'up' : pct < 0 ? 'down' : '' };
+}
+function shortUrl(url) {
+  try { return new URL(url).pathname; } catch { return url; }
+}
+
+// --- Dashboard ---
+function renderDashboard(data) {
+  const rows = data.daily || [];
+  const totals = rows.reduce((a,r)=>({clicks:a.clicks+r.clicks,impressions:a.impressions+r.impressions}),{clicks:0,impressions:0});
+  const avgCtr = totals.impressions ? totals.clicks/totals.impressions : 0;
+  const avgPos = rows.length ? rows.reduce((s,r)=>s+r.position,0)/rows.length : 0;
+
+  document.getElementById('tab-content').innerHTML = `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="label">Total clicks</div><div class="value">${fmtNum(totals.clicks)}</div></div>
+      <div class="metric-card"><div class="label">Total impressions</div><div class="value">${fmtNum(totals.impressions)}</div></div>
+      <div class="metric-card"><div class="label">Avg CTR</div><div class="value">${fmtCtr(avgCtr)}</div></div>
+      <div class="metric-card"><div class="label">Avg position</div><div class="value">${fmtPos(avgPos)}</div></div>
+    </div>
+    <div class="card"><div class="card-title">Clicks &amp; impressions over time</div><div class="chart-wrap"><canvas id="chart-trend"></canvas></div></div>
+    <div class="two-col">
+      <div class="card"><div class="card-title">Top queries</div><div id="tbl-queries"></div></div>
+      <div class="card"><div class="card-title">Top pages</div><div id="tbl-pages"></div></div>
+    </div>
+    <div class="two-col">
+      <div class="card"><div class="card-title">Clicks by device</div><div class="chart-wrap"><canvas id="chart-devices"></canvas></div></div>
+      <div class="card"><div class="card-title">Top countries</div><div id="tbl-countries"></div></div>
+    </div>
+  `;
+
+  // Trend chart
+  const labels = rows.map(r => { const d=r.keys[0]; return d.slice(5); });
+  new Chart(document.getElementById('chart-trend'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {label:'Clicks',data:rows.map(r=>r.clicks),borderColor:'#2554e8',backgroundColor:'rgba(37,84,232,.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2},
+        {label:'Impressions',data:rows.map(r=>r.impressions),borderColor:'#0d9468',backgroundColor:'rgba(13,148,104,.06)',fill:true,tension:.3,pointRadius:0,borderWidth:2,yAxisID:'y1'},
+      ]
+    },
+    options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:16,font:{size:12}}}},
+      scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,font:{size:11}}},y:{position:'left',grid:{color:'#eef0f4'},ticks:{font:{size:11}}},y1:{position:'right',grid:{display:false},ticks:{font:{size:11}}}}}
+  });
+
+  // Queries table
+  document.getElementById('tbl-queries').innerHTML = makeTable(
+    ['Query','Clicks','Impr','CTR','Pos'],
+    (data.top_queries||[]).map(r=>[
+      `<span class="query-text">${esc(r.keys[0])}</span>`,
+      fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr), fmtPos(r.position)
+    ]),
+    [false,true,true,true,true]
+  );
+
+  // Pages table
+  document.getElementById('tbl-pages').innerHTML = makeTable(
+    ['Page','Clicks','Impr','CTR'],
+    (data.top_pages||[]).slice(0,10).map(r=>[
+      `<span class="page-text" title="${esc(r.keys[0])}">${esc(shortUrl(r.keys[0]))}</span>`,
+      fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr)
+    ]),
+    [false,true,true,true]
+  );
+
+  // Devices chart
+  const devs = data.devices||[];
+  new Chart(document.getElementById('chart-devices'), {
+    type:'bar',
+    data:{
+      labels:devs.map(r=>r.keys[0]),
+      datasets:[{label:'Clicks',data:devs.map(r=>r.clicks),backgroundColor:['#2554e8','#6d8aee','#b0c1f7']}]
+    },
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'#eef0f4'}}}}
+  });
+
+  // Countries table
+  document.getElementById('tbl-countries').innerHTML = makeTable(
+    ['Country','Clicks','Impressions','CTR'],
+    (data.countries||[]).slice(0,8).map(r=>[
+      r.keys[0].toUpperCase(), fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr)
+    ]),
+    [false,true,true,true]
+  );
+}
+
+// --- Report ---
+function renderReport(data) {
+  const c = data.current || {};
+  const p = data.previous || {};
+  const ch = {
+    clicks: pctChange(c.clicks, p.clicks),
+    impressions: pctChange(c.impressions, p.impressions),
+    ctr: pctChange(c.ctr, p.ctr),
+    position: pctChange(c.position, p.position),
+  };
+  // Position: lower is better, invert the color
+  ch.position.cls = ch.position.cls === 'up' ? 'down' : ch.position.cls === 'down' ? 'up' : '';
+
+  document.getElementById('tab-content').innerHTML = `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="label">Total clicks</div><div class="value">${fmtNum(c.clicks)}</div><div class="change ${ch.clicks.cls}">${ch.clicks.text} vs prev</div></div>
+      <div class="metric-card"><div class="label">Total impressions</div><div class="value">${fmtNum(c.impressions)}</div><div class="change ${ch.impressions.cls}">${ch.impressions.text} vs prev</div></div>
+      <div class="metric-card"><div class="label">Avg CTR</div><div class="value">${fmtCtr(c.ctr)}</div><div class="change ${ch.ctr.cls}">${ch.ctr.text} vs prev</div></div>
+      <div class="metric-card"><div class="label">Avg position</div><div class="value">${fmtPos(c.position)}</div><div class="change ${ch.position.cls}">${ch.position.text} vs prev</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Biggest movers (by click change)</div>
+      <div id="tbl-movers"></div>
+    </div>
+  `;
+
+  const movers = data.top_movers || [];
+  document.getElementById('tbl-movers').innerHTML = makeTable(
+    ['Query','Clicks','Prev','Change','CTR','Pos'],
+    movers.map(r => {
+      const cls = r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : '';
+      const sign = r.delta > 0 ? '+' : '';
+      return [
+        `<span class="query-text">${esc(r.query)}</span>`,
+        fmtNum(r.clicks),
+        fmtNum(r.prev_clicks),
+        `<span class="change ${cls}">${sign}${r.delta}</span>`,
+        fmtCtr(r.ctr),
+        fmtPos(r.position)
+      ];
+    }),
+    [false,true,true,true,true,true]
+  );
+}
+
+// --- Opportunities ---
+function renderOpportunities(data) {
+  const el = document.getElementById('tab-content');
+  el.innerHTML = `
+    <div class="metric-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="metric-card"><div class="label">Queries analyzed</div><div class="value">${data.total_queries_analyzed||0}</div></div>
+      <div class="metric-card"><div class="label">Quick wins found</div><div class="value">${(data.quick_wins||[]).length}</div></div>
+      <div class="metric-card"><div class="label">Content gaps found</div><div class="value">${(data.content_gaps||[]).length}</div></div>
+    </div>
+
+    <div class="opp-section">
+      <div class="card">
+        <h3>Quick wins <span class="badge badge-green">High impact</span></h3>
+        <p class="desc">Keywords with high impressions ranking in positions 4–20. Small improvements could push these to page one.</p>
+        <div id="tbl-quickwins"></div>
+      </div>
+    </div>
+
+    <div class="opp-section">
+      <div class="card">
+        <h3>CTR opportunities <span class="badge badge-amber">Optimize</span></h3>
+        <p class="desc">Top-10 keywords with CTR below 3%. Improving titles and meta descriptions could capture more clicks.</p>
+        <div id="tbl-ctr"></div>
+      </div>
+    </div>
+
+    <div class="opp-section">
+      <div class="card">
+        <h3>Content gaps <span class="badge badge-red">Create</span></h3>
+        <p class="desc">Queries generating impressions but almost no clicks, ranked beyond page one. These are topics worth creating dedicated content for.</p>
+        <div id="tbl-gaps"></div>
+      </div>
+    </div>
+
+    <div class="opp-section">
+      <div class="card">
+        <h3>Striking distance</h3>
+        <p class="desc">Keywords in positions 11–20 with enough search volume to be worth optimizing for.</p>
+        <div id="tbl-striking"></div>
+      </div>
+    </div>
+  `;
+
+  const oppTable = (id, rows) => {
+    document.getElementById(id).innerHTML = rows.length ? makeTable(
+      ['Query','Clicks','Impressions','CTR','Position'],
+      rows.map(r=>[
+        `<span class="query-text">${esc(r.query)}</span>`,
+        fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr), fmtPos(r.position)
+      ]),
+      [false,true,true,true,true]
+    ) : '<div class="empty">No opportunities found in this category.</div>';
+  };
+
+  oppTable('tbl-quickwins', data.quick_wins||[]);
+  oppTable('tbl-ctr', data.ctr_opportunities||[]);
+  oppTable('tbl-gaps', data.content_gaps||[]);
+  oppTable('tbl-striking', data.striking_distance||[]);
+}
+
+// --- Helpers ---
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function makeTable(headers, rows, numCols) {
+  if (!rows.length) return '<div class="empty">No data available.</div>';
+  return `<table class="data-table"><thead><tr>${headers.map((h,i)=>
+    `<th${numCols&&numCols[i]?' class="num"':''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>
+    `<tr>${r.map((c,i)=>`<td${numCols&&numCols[i]?' class="num"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+init();
+</script>
+</body>
+</html>
