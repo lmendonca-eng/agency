@@ -93,12 +93,24 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1re
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:.9rem}
 
+/* --- Client tools --- */
+.site-filter{font-family:var(--font-ui);font-size:.85rem;padding:.45rem .75rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);min-width:180px}
+.period-label{font-size:.78rem;color:var(--text-muted)}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:1rem}
+.card-head .card-title,.card-head h3{margin-bottom:0}
+.btn-sm{padding:.3rem .65rem;font-size:.75rem}
+.error-box{background:var(--red-light);color:var(--red);border-radius:var(--radius);padding:1rem 1.2rem;font-size:.85rem}
+.status-pill{font-size:.65rem;font-weight:600;padding:.05rem .4rem;border-radius:20px;margin-left:.35rem;vertical-align:middle}
+.status-new{background:var(--emerald-light);color:var(--emerald)}
+.status-lost{background:var(--red-light);color:var(--red)}
+
 /* --- Responsive --- */
 @media(max-width:768px){
   .metric-grid{grid-template-columns:repeat(2,1fr)}
   .two-col{grid-template-columns:1fr}
   .controls-bar{flex-direction:column;align-items:stretch}
-  .site-select{min-width:auto}
+  .site-select,.site-filter{min-width:auto}
+  .card-head{flex-wrap:wrap}
 }
 @media(max-width:480px){
   .app-shell{padding:1rem}
@@ -118,7 +130,9 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1re
 
 <script>
 // --- State ---
-const state = { user: null, sites: [], site: '', days: 28, tab: 'dashboard', cache: {} };
+const state = { user: null, sites: [], clients: [], site: '', siteFilter: '', days: 28, tab: 'dashboard', cache: {}, volumes: {} };
+const charts = [];
+const exportsById = {};
 
 // --- API ---
 async function api(path) {
@@ -132,20 +146,41 @@ async function init() {
   const data = await api('/api/auth/user');
   if (data?.authenticated) {
     state.user = data;
-    const sitesData = await api('/api/sites');
-    state.sites = (sitesData?.sites || []).sort((a,b) => a.siteUrl.localeCompare(b.siteUrl));
+    const [sitesData, clientsData] = await Promise.all([api('/api/sites'), api('/api/clients')]);
+    state.clients = clientsData?.clients || [];
+    // Client sites first (by client ID), then unmapped properties
+    state.sites = (sitesData?.sites || []).map(s => ({ ...s, client: matchClient(s.siteUrl) }))
+      .sort((a, b) => (!a.client - !b.client) || siteLabel(a).localeCompare(siteLabel(b), undefined, { numeric: true }));
     if (state.sites.length) state.site = state.sites[0].siteUrl;
+  } else if (data?.error) {
+    document.getElementById('main').innerHTML = `<div class="error-box">${esc(data.error)}</div>`;
+    return;
   }
   render();
   if (state.user && state.site) loadTab();
 }
 
+// --- Clients ---
+function siteHost(url) {
+  if (url.startsWith('sc-domain:')) return url.slice(10).toLowerCase();
+  try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return url.toLowerCase(); }
+}
+function matchClient(siteUrl) {
+  const host = siteHost(siteUrl), domainProp = siteUrl.startsWith('sc-domain:');
+  return state.clients.find(c => (c.domains || []).some(d =>
+    host === d || host.endsWith('.' + d) || (domainProp && d.endsWith('.' + host)))) || null;
+}
+function siteLabel(s) {
+  return s.client ? `${s.client.id} · ${s.client.name} (${siteHost(s.siteUrl)})` : `~ ${s.siteUrl}`;
+}
+function currentSite() { return state.sites.find(s => s.siteUrl === state.site); }
+
 // --- Render ---
 function render() {
   document.getElementById('user-area').innerHTML = state.user
     ? `<div class="user-bar">
-        ${state.user.picture ? `<img src="${state.user.picture}" alt="">` : ''}
-        <span class="name">${state.user.name || state.user.email}</span>
+        ${state.user.picture ? `<img src="${esc(state.user.picture)}" alt="">` : ''}
+        <span class="name">${esc(state.user.name || state.user.email)}</span>
         <a href="/api/auth/logout" class="btn btn-ghost">Sign out</a>
        </div>`
     : '';
@@ -161,54 +196,70 @@ function render() {
       </div>`;
     return;
   }
+  const tabs = [['dashboard', 'Dashboard'], ['report', 'Report'], ['opportunities', 'Opportunities'], ['tracked', 'Published content']];
   const main = document.getElementById('main');
   main.innerHTML = `
     <div class="controls-bar">
-      <select class="site-select" id="site-sel">${state.sites.map(s =>
-        `<option value="${s.siteUrl}" ${s.siteUrl===state.site?'selected':''}>${s.siteUrl}</option>`
-      ).join('')}</select>
+      <input class="site-filter" id="site-filter" type="search" placeholder="Filter by client ID or name" value="${esc(state.siteFilter)}">
+      <select class="site-select" id="site-sel">${siteOptions()}</select>
       <select class="period-select" id="period-sel">
         <option value="7" ${state.days===7?'selected':''}>Last 7 days</option>
         <option value="28" ${state.days===28?'selected':''}>Last 28 days</option>
         <option value="90" ${state.days===90?'selected':''}>Last 90 days</option>
       </select>
+      <span class="period-label" id="period-label"></span>
     </div>
-    <div class="tab-bar">
-      <button class="tab-btn ${state.tab==='dashboard'?'active':''}" data-tab="dashboard">Dashboard</button>
-      <button class="tab-btn ${state.tab==='report'?'active':''}" data-tab="report">Report</button>
-      <button class="tab-btn ${state.tab==='opportunities'?'active':''}" data-tab="opportunities">Opportunities</button>
-    </div>
+    <div class="tab-bar">${tabs.map(([id, label]) =>
+      `<button class="tab-btn ${state.tab===id?'active':''}" data-tab="${id}">${label}</button>`).join('')}</div>
     <div id="tab-content"><div class="loading"><div class="spinner"></div>Loading data…</div></div>
   `;
-  document.getElementById('site-sel').addEventListener('change', e => { state.site = e.target.value; state.cache = {}; loadTab(); });
-  document.getElementById('period-sel').addEventListener('change', e => { state.days = +e.target.value; state.cache = {}; loadTab(); });
+  document.getElementById('site-filter').addEventListener('input', e => {
+    state.siteFilter = e.target.value;
+    const sel = document.getElementById('site-sel');
+    sel.innerHTML = siteOptions();
+    if (sel.value && sel.value !== state.site) { state.site = sel.value; loadTab(); }
+  });
+  document.getElementById('site-sel').addEventListener('change', e => { state.site = e.target.value; loadTab(); });
+  document.getElementById('period-sel').addEventListener('change', e => { state.days = +e.target.value; loadTab(); });
   main.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => {
     state.tab = btn.dataset.tab; render(); loadTab();
   }));
 }
 
+function siteOptions() {
+  const f = state.siteFilter.trim().toLowerCase();
+  const list = state.sites.filter(s => !f || siteLabel(s).toLowerCase().includes(f) || s.siteUrl.toLowerCase().includes(f));
+  if (!list.length) return '<option value="">No matching sites</option>';
+  if (!list.some(s => s.siteUrl === state.site)) state.site = list[0].siteUrl;
+  return list.map(s => `<option value="${esc(s.siteUrl)}" ${s.siteUrl===state.site?'selected':''}>${esc(siteLabel(s))}</option>`).join('');
+}
+
 // --- Load tab data ---
 async function loadTab() {
   const el = document.getElementById('tab-content');
-  if (!el) return;
+  if (!el || !state.site) return;
+  destroyCharts();
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Loading data…</div>';
   const key = `${state.tab}-${state.site}-${state.days}`;
   if (!state.cache[key]) {
-    const endpoint = state.tab === 'dashboard' ? 'dashboard'
-      : state.tab === 'report' ? 'report' : 'opportunities';
-    state.cache[key] = await api(`/api/${endpoint}?site=${encodeURIComponent(state.site)}&days=${state.days}`);
+    const data = await api(`/api/${state.tab}?site=${encodeURIComponent(state.site)}&days=${state.days}`);
+    if (data && !data.error) state.cache[key] = data;
+    else if (data?.error) { el.innerHTML = `<div class="error-box">${esc(data.error)}</div>`; return; }
   }
   const data = state.cache[key];
-  if (!data) return;
+  if (!data || key !== `${state.tab}-${state.site}-${state.days}`) return;
+  const p = data.period;
+  document.getElementById('period-label').textContent = p ? `${p.start} → ${p.end}` : '';
   if (state.tab === 'dashboard') renderDashboard(data);
   else if (state.tab === 'report') renderReport(data);
-  else renderOpportunities(data);
+  else if (state.tab === 'opportunities') renderOpportunities(data);
+  else renderTracked(data);
 }
 
 // --- Formatting ---
-function fmtNum(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : Math.round(n).toLocaleString(); }
-function fmtCtr(n) { return (n*100).toFixed(1)+'%'; }
-function fmtPos(n) { return n.toFixed(1); }
+function fmtNum(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : Math.round(n || 0).toLocaleString(); }
+function fmtCtr(n) { return ((n || 0)*100).toFixed(1)+'%'; }
+function fmtPos(n) { return n ? n.toFixed(1) : '—'; }
 function pctChange(curr, prev) {
   if (!prev) return { text: '—', cls: '' };
   const pct = ((curr - prev) / prev * 100).toFixed(1);
@@ -217,35 +268,42 @@ function pctChange(curr, prev) {
 function shortUrl(url) {
   try { return new URL(url).pathname; } catch { return url; }
 }
+function metricCards(c, p) {
+  const ch = p ? {
+    clicks: pctChange(c.clicks, p.clicks), impressions: pctChange(c.impressions, p.impressions),
+    ctr: pctChange(c.ctr, p.ctr), position: pctChange(c.position, p.position),
+  } : null;
+  // Position: lower is better, invert the color
+  if (ch) ch.position.cls = ch.position.cls === 'up' ? 'down' : ch.position.cls === 'down' ? 'up' : '';
+  const card = (label, value, k) => `<div class="metric-card"><div class="label">${label}</div><div class="value">${value}</div>${
+    ch ? `<div class="change ${ch[k].cls}">${ch[k].text} vs prev</div>` : ''}</div>`;
+  return `<div class="metric-grid">
+    ${card('Total clicks', fmtNum(c.clicks), 'clicks')}
+    ${card('Total impressions', fmtNum(c.impressions), 'impressions')}
+    ${card('Avg CTR', fmtCtr(c.ctr), 'ctr')}
+    ${card('Avg position', fmtPos(c.position), 'position')}
+  </div>`;
+}
 
 // --- Dashboard ---
 function renderDashboard(data) {
   const rows = data.daily || [];
-  const totals = rows.reduce((a,r)=>({clicks:a.clicks+r.clicks,impressions:a.impressions+r.impressions}),{clicks:0,impressions:0});
-  const avgCtr = totals.impressions ? totals.clicks/totals.impressions : 0;
-  const avgPos = rows.length ? rows.reduce((s,r)=>s+r.position,0)/rows.length : 0;
-
   document.getElementById('tab-content').innerHTML = `
-    <div class="metric-grid">
-      <div class="metric-card"><div class="label">Total clicks</div><div class="value">${fmtNum(totals.clicks)}</div></div>
-      <div class="metric-card"><div class="label">Total impressions</div><div class="value">${fmtNum(totals.impressions)}</div></div>
-      <div class="metric-card"><div class="label">Avg CTR</div><div class="value">${fmtCtr(avgCtr)}</div></div>
-      <div class="metric-card"><div class="label">Avg position</div><div class="value">${fmtPos(avgPos)}</div></div>
-    </div>
+    ${metricCards(data.totals || {})}
     <div class="card"><div class="card-title">Clicks &amp; impressions over time</div><div class="chart-wrap"><canvas id="chart-trend"></canvas></div></div>
     <div class="two-col">
-      <div class="card"><div class="card-title">Top queries</div><div id="tbl-queries"></div></div>
-      <div class="card"><div class="card-title">Top pages</div><div id="tbl-pages"></div></div>
+      <div class="card">${cardHead('Top queries', 'tbl-queries')}<div id="tbl-queries"></div></div>
+      <div class="card">${cardHead('Top pages', 'tbl-pages')}<div id="tbl-pages"></div></div>
     </div>
     <div class="two-col">
       <div class="card"><div class="card-title">Clicks by device</div><div class="chart-wrap"><canvas id="chart-devices"></canvas></div></div>
-      <div class="card"><div class="card-title">Top countries</div><div id="tbl-countries"></div></div>
+      <div class="card">${cardHead('Top countries', 'tbl-countries')}<div id="tbl-countries"></div></div>
     </div>
   `;
 
   // Trend chart
-  const labels = rows.map(r => { const d=r.keys[0]; return d.slice(5); });
-  new Chart(document.getElementById('chart-trend'), {
+  const labels = rows.map(r => r.keys[0].slice(5));
+  charts.push(new Chart(document.getElementById('chart-trend'), {
     type:'line',
     data:{
       labels,
@@ -256,162 +314,188 @@ function renderDashboard(data) {
     },
     options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:16,font:{size:12}}}},
       scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,font:{size:11}}},y:{position:'left',grid:{color:'#eef0f4'},ticks:{font:{size:11}}},y1:{position:'right',grid:{display:false},ticks:{font:{size:11}}}}}
-  });
+  }));
 
-  // Queries table
-  document.getElementById('tbl-queries').innerHTML = makeTable(
-    ['Query','Clicks','Impr','CTR','Pos'],
-    (data.top_queries||[]).map(r=>[
-      `<span class="query-text">${esc(r.keys[0])}</span>`,
-      fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr), fmtPos(r.position)
-    ]),
-    [false,true,true,true,true]
-  );
+  renderTable('tbl-queries', ['Query','Clicks','Impr','CTR','Pos'], [false,true,true,true,true],
+    (data.top_queries||[]).map(r => ({
+      html: [`<span class="query-text" title="${esc(r.keys[0])}">${esc(r.keys[0])}</span>`, fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr), fmtPos(r.position)],
+      raw: [r.keys[0], r.clicks, r.impressions, r.ctr, r.position],
+    })));
 
-  // Pages table
-  document.getElementById('tbl-pages').innerHTML = makeTable(
-    ['Page','Clicks','Impr','CTR'],
-    (data.top_pages||[]).slice(0,10).map(r=>[
-      `<span class="page-text" title="${esc(r.keys[0])}">${esc(shortUrl(r.keys[0]))}</span>`,
-      fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr)
-    ]),
-    [false,true,true,true]
-  );
+  renderTable('tbl-pages', ['Page','Clicks','Impr','CTR'], [false,true,true,true],
+    (data.top_pages||[]).slice(0,10).map(r => ({
+      html: [`<span class="page-text" title="${esc(r.keys[0])}">${esc(shortUrl(r.keys[0]))}</span>`, fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr)],
+      raw: [r.keys[0], r.clicks, r.impressions, r.ctr],
+    })));
 
   // Devices chart
   const devs = data.devices||[];
-  new Chart(document.getElementById('chart-devices'), {
+  charts.push(new Chart(document.getElementById('chart-devices'), {
     type:'bar',
     data:{
       labels:devs.map(r=>r.keys[0]),
       datasets:[{label:'Clicks',data:devs.map(r=>r.clicks),backgroundColor:['#2554e8','#6d8aee','#b0c1f7']}]
     },
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'#eef0f4'}}}}
-  });
+  }));
 
-  // Countries table
-  document.getElementById('tbl-countries').innerHTML = makeTable(
-    ['Country','Clicks','Impressions','CTR'],
-    (data.countries||[]).slice(0,8).map(r=>[
-      r.keys[0].toUpperCase(), fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr)
-    ]),
-    [false,true,true,true]
-  );
+  renderTable('tbl-countries', ['Country','Clicks','Impressions','CTR'], [false,true,true,true],
+    (data.countries||[]).slice(0,8).map(r => ({
+      html: [esc(r.keys[0].toUpperCase()), fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr)],
+      raw: [r.keys[0].toUpperCase(), r.clicks, r.impressions, r.ctr],
+    })));
 }
 
 // --- Report ---
 function renderReport(data) {
-  const c = data.current || {};
-  const p = data.previous || {};
-  const ch = {
-    clicks: pctChange(c.clicks, p.clicks),
-    impressions: pctChange(c.impressions, p.impressions),
-    ctr: pctChange(c.ctr, p.ctr),
-    position: pctChange(c.position, p.position),
-  };
-  // Position: lower is better, invert the color
-  ch.position.cls = ch.position.cls === 'up' ? 'down' : ch.position.cls === 'down' ? 'up' : '';
-
+  const pp = data.previous_period;
   document.getElementById('tab-content').innerHTML = `
-    <div class="metric-grid">
-      <div class="metric-card"><div class="label">Total clicks</div><div class="value">${fmtNum(c.clicks)}</div><div class="change ${ch.clicks.cls}">${ch.clicks.text} vs prev</div></div>
-      <div class="metric-card"><div class="label">Total impressions</div><div class="value">${fmtNum(c.impressions)}</div><div class="change ${ch.impressions.cls}">${ch.impressions.text} vs prev</div></div>
-      <div class="metric-card"><div class="label">Avg CTR</div><div class="value">${fmtCtr(c.ctr)}</div><div class="change ${ch.ctr.cls}">${ch.ctr.text} vs prev</div></div>
-      <div class="metric-card"><div class="label">Avg position</div><div class="value">${fmtPos(c.position)}</div><div class="change ${ch.position.cls}">${ch.position.text} vs prev</div></div>
-    </div>
+    ${metricCards(data.current || {}, data.previous || {})}
     <div class="card">
-      <div class="card-title">Biggest movers (by click change)</div>
+      ${cardHead(`Biggest movers (by click change${pp ? `, vs ${pp.start} → ${pp.end}` : ''})`, 'tbl-movers')}
       <div id="tbl-movers"></div>
     </div>
   `;
 
-  const movers = data.top_movers || [];
-  document.getElementById('tbl-movers').innerHTML = makeTable(
-    ['Query','Clicks','Prev','Change','CTR','Pos'],
-    movers.map(r => {
+  renderTable('tbl-movers', ['Query','Clicks','Prev','Change','CTR','Pos'], [false,true,true,true,true,true],
+    (data.top_movers || []).map(r => {
       const cls = r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : '';
       const sign = r.delta > 0 ? '+' : '';
-      return [
-        `<span class="query-text">${esc(r.query)}</span>`,
-        fmtNum(r.clicks),
-        fmtNum(r.prev_clicks),
-        `<span class="change ${cls}">${sign}${r.delta}</span>`,
-        fmtCtr(r.ctr),
-        fmtPos(r.position)
-      ];
-    }),
-    [false,true,true,true,true,true]
-  );
+      const pill = r.status ? `<span class="status-pill status-${r.status}">${r.status}</span>` : '';
+      return {
+        html: [`<span class="query-text" title="${esc(r.query)}">${esc(r.query)}</span>${pill}`, fmtNum(r.clicks), fmtNum(r.prev_clicks),
+               `<span class="change ${cls}">${sign}${r.delta}</span>`, fmtCtr(r.ctr), fmtPos(r.position)],
+        raw: [r.query, r.clicks, r.prev_clicks, r.delta, r.ctr, r.position ?? '', r.status],
+      };
+    }), ['Query','Clicks','Prev clicks','Change','CTR','Position','Status']);
 }
 
 // --- Opportunities ---
+const OPP_SECTIONS = [
+  ['quick_wins', 'tbl-quickwins', 'Quick wins', '<span class="badge badge-green">High impact</span>', 'Keywords with high impressions ranking in positions 4–20. Small improvements could push these to page one.'],
+  ['ctr_opportunities', 'tbl-ctr', 'CTR opportunities', '<span class="badge badge-amber">Optimize</span>', 'Top-10 keywords with CTR below 3%. Improving titles and meta descriptions could capture more clicks.'],
+  ['content_gaps', 'tbl-gaps', 'Content gaps', '<span class="badge badge-red">Create</span>', 'Queries generating impressions but almost no clicks, ranked beyond page one. These are topics worth creating dedicated content for.'],
+  ['striking_distance', 'tbl-striking', 'Striking distance', '', 'Keywords in positions 11–20 with enough impressions to be worth optimizing for.'],
+];
+
 function renderOpportunities(data) {
   const el = document.getElementById('tab-content');
+  const volBtn = state.user.volumes_enabled
+    ? `<button class="btn btn-ghost btn-sm" id="vol-btn">Add monthly search volume</button>` : '';
   el.innerHTML = `
     <div class="metric-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="metric-card"><div class="label">Queries analyzed</div><div class="value">${data.total_queries_analyzed||0}</div></div>
       <div class="metric-card"><div class="label">Quick wins found</div><div class="value">${(data.quick_wins||[]).length}</div></div>
       <div class="metric-card"><div class="label">Content gaps found</div><div class="value">${(data.content_gaps||[]).length}</div></div>
     </div>
-
+    ${volBtn ? `<div class="controls-bar">${volBtn}<span class="period-label" id="vol-status"></span></div>` : ''}
+    ${OPP_SECTIONS.map(([, id, title, badge, desc]) => `
     <div class="opp-section">
       <div class="card">
-        <h3>Quick wins <span class="badge badge-green">High impact</span></h3>
-        <p class="desc">Keywords with high impressions ranking in positions 4–20. Small improvements could push these to page one.</p>
-        <div id="tbl-quickwins"></div>
+        ${cardHead(`${title} ${badge}`, id, 'h3')}
+        <p class="desc">${desc}</p>
+        <div id="${id}"></div>
       </div>
-    </div>
-
-    <div class="opp-section">
-      <div class="card">
-        <h3>CTR opportunities <span class="badge badge-amber">Optimize</span></h3>
-        <p class="desc">Top-10 keywords with CTR below 3%. Improving titles and meta descriptions could capture more clicks.</p>
-        <div id="tbl-ctr"></div>
-      </div>
-    </div>
-
-    <div class="opp-section">
-      <div class="card">
-        <h3>Content gaps <span class="badge badge-red">Create</span></h3>
-        <p class="desc">Queries generating impressions but almost no clicks, ranked beyond page one. These are topics worth creating dedicated content for.</p>
-        <div id="tbl-gaps"></div>
-      </div>
-    </div>
-
-    <div class="opp-section">
-      <div class="card">
-        <h3>Striking distance</h3>
-        <p class="desc">Keywords in positions 11–20 with enough search volume to be worth optimizing for.</p>
-        <div id="tbl-striking"></div>
-      </div>
-    </div>
+    </div>`).join('')}
   `;
+  drawOpportunityTables(data);
+  if (volBtn) document.getElementById('vol-btn').addEventListener('click', () => loadVolumes(data));
+}
 
-  const oppTable = (id, rows) => {
-    document.getElementById(id).innerHTML = rows.length ? makeTable(
-      ['Query','Clicks','Impressions','CTR','Position'],
-      rows.map(r=>[
-        `<span class="query-text">${esc(r.query)}</span>`,
-        fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr), fmtPos(r.position)
-      ]),
-      [false,true,true,true,true]
-    ) : '<div class="empty">No opportunities found in this category.</div>';
-  };
+function drawOpportunityTables(data) {
+  const vols = state.volumes[state.site];
+  OPP_SECTIONS.forEach(([field, id]) => {
+    const headers = ['Query','Clicks','Impressions','CTR','Position'].concat(vols ? ['Volume'] : []);
+    renderTable(id, headers, [false,true,true,true,true,true],
+      (data[field]||[]).map(r => {
+        const v = vols ? vols[r.query.toLowerCase()] : undefined;
+        return {
+          html: [`<span class="query-text" title="${esc(r.query)}">${esc(r.query)}</span>`, fmtNum(r.clicks), fmtNum(r.impressions), fmtCtr(r.ctr), fmtPos(r.position)]
+            .concat(vols ? [v == null ? '—' : fmtNum(v)] : []),
+          raw: [r.query, r.clicks, r.impressions, r.ctr, r.position].concat(vols ? [v ?? ''] : []),
+        };
+      }), null, 'No opportunities found in this category.');
+  });
+}
 
-  oppTable('tbl-quickwins', data.quick_wins||[]);
-  oppTable('tbl-ctr', data.ctr_opportunities||[]);
-  oppTable('tbl-gaps', data.content_gaps||[]);
-  oppTable('tbl-striking', data.striking_distance||[]);
+async function loadVolumes(data) {
+  const status = document.getElementById('vol-status');
+  const keywords = [...new Set(OPP_SECTIONS.flatMap(([f]) => (data[f]||[]).map(r => r.query.toLowerCase())))]
+    .filter(k => k.length <= 80).slice(0, 200);
+  if (!keywords.length) { status.textContent = 'No keywords to look up.'; return; }
+  const site = currentSite();
+  const location = site?.client?.id === '4999' ? 2124 : 2840;  // Toronto Honda → Canada
+  status.textContent = `Looking up ${keywords.length} keywords…`;
+  const res = await api(`/api/volumes?location=${location}&keywords=${encodeURIComponent(keywords.join(','))}`);
+  if (!res || res.error) { status.textContent = res?.error || 'Lookup failed.'; return; }
+  state.volumes[state.site] = res.volumes;
+  status.textContent = `Monthly search volume added (${location === 2124 ? 'Canada' : 'US'}).`;
+  drawOpportunityTables(data);
+}
+
+// --- Published content ---
+function renderTracked(data) {
+  const el = document.getElementById('tab-content');
+  if (!data.client) { el.innerHTML = '<div class="empty">This site isn’t mapped to a client yet. Add its domain to api/clients.json.</div>'; return; }
+  if (!(data.pages||[]).length) { el.innerHTML = `<div class="empty">No published content is tracked for ${esc(data.client.id)} · ${esc(data.client.name)} yet.</div>`; return; }
+  const pages = data.pages;
+  const sum = k => pages.reduce((s, p) => s + p.current[k], 0);
+  const prevSum = k => pages.reduce((s, p) => s + p.previous[k], 0);
+  const cur = { clicks: sum('clicks'), impressions: sum('impressions') };
+  const prev = { clicks: prevSum('clicks'), impressions: prevSum('impressions') };
+  const posW = ps => { const imp = ps.reduce((s, x) => s + x.impressions, 0); return imp ? ps.reduce((s, x) => s + x.position * x.impressions, 0) / imp : 0; };
+  cur.ctr = cur.impressions ? cur.clicks / cur.impressions : 0; cur.position = posW(pages.map(p => p.current));
+  prev.ctr = prev.impressions ? prev.clicks / prev.impressions : 0; prev.position = posW(pages.map(p => p.previous));
+
+  el.innerHTML = `
+    <p class="desc" style="margin-bottom:1rem;color:var(--text-muted);font-size:.8rem">Content pages published for <strong>${esc(data.client.id)} · ${esc(data.client.name)}</strong> (${pages.length} pages), compared with the previous period.</p>
+    ${metricCards(cur, prev)}
+    <div class="card">${cardHead('Published pages', 'tbl-tracked')}<div id="tbl-tracked"></div></div>
+  `;
+  renderTable('tbl-tracked', ['Page','Published','Clicks','Change','Impr','CTR','Pos'], [false,false,true,true,true,true,true],
+    [...pages].sort((a, b) => b.current.impressions - a.current.impressions).map(p => {
+      const d = p.current.clicks - p.previous.clicks;
+      const cls = d > 0 ? 'up' : d < 0 ? 'down' : '';
+      return {
+        html: [`<span class="page-text" title="${esc(p.title || '')}">${esc(p.path)}</span>`, esc(p.month), fmtNum(p.current.clicks),
+               `<span class="change ${cls}">${d > 0 ? '+' : ''}${d}</span>`, fmtNum(p.current.impressions), fmtCtr(p.current.ctr), fmtPos(p.current.position)],
+        raw: [p.path, p.title || '', p.month, p.current.clicks, p.previous.clicks, p.current.impressions, p.previous.impressions, p.current.ctr, p.current.position || ''],
+      };
+    }), ['Page','H1','Published','Clicks','Prev clicks','Impressions','Prev impressions','CTR','Position']);
 }
 
 // --- Helpers ---
-function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
-function makeTable(headers, rows, numCols) {
-  if (!rows.length) return '<div class="empty">No data available.</div>';
+function esc(s) { const d=document.createElement('div'); d.textContent=s ?? ''; return d.innerHTML; }
+function destroyCharts() { while (charts.length) charts.pop().destroy(); }
+function cardHead(title, tableId, tag = 'div') {
+  const cls = tag === 'div' ? ' class="card-title"' : '';
+  return `<div class="card-head"><${tag}${cls}>${title}</${tag}><button class="btn btn-ghost btn-sm" data-export="${tableId}">Export CSV</button></div>`;
+}
+function makeTable(headers, rows, numCols, emptyText = 'No data available.') {
+  if (!rows.length) return `<div class="empty">${emptyText}</div>`;
   return `<table class="data-table"><thead><tr>${headers.map((h,i)=>
     `<th${numCols&&numCols[i]?' class="num"':''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>
     `<tr>${r.map((c,i)=>`<td${numCols&&numCols[i]?' class="num"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
+// rows: [{html: [...cells], raw: [...values]}]; exportHeaders defaults to the visible headers
+function renderTable(id, headers, numCols, rows, exportHeaders, emptyText) {
+  document.getElementById(id).innerHTML = makeTable(headers, rows.map(r => r.html), numCols, emptyText);
+  exportsById[id] = { headers: exportHeaders || headers, rows: rows.map(r => r.raw) };
+}
+function exportCsv(id) {
+  const t = exportsById[id];
+  if (!t || !t.rows.length) return;
+  const cell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = [t.headers, ...t.rows].map(r => r.map(cell).join(',')).join('\r\n');
+  const site = currentSite();
+  const name = `${site?.client?.id || siteHost(state.site)}-${state.tab}-${id.replace('tbl-', '')}-${state.days}d.csv`;
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })), download: name });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-export]');
+  if (btn) exportCsv(btn.dataset.export);
+});
 
 init();
 </script>

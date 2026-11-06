@@ -1,0 +1,6 @@
+__pycache__/
+.vercel/
+.env
+.env*.local
+# Client roster is private: set it in Vercel as CLIENTS_JSON (see README)
+api/clients.json

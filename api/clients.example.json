@@ -1,0 +1,13 @@
+{
+  "clients": [
+    {
+      "id": "1234",
+      "name": "Example Dealer",
+      "domains": ["parts.example-dealer.com"],
+      "pages": [
+        {"path": "/brake-pads", "month": "2026-10", "title": "Genuine OEM Brake Pads", "type": "search"},
+        {"path": "/v-example", "month": "2026-10", "title": "Example Parts & Accessories", "type": "vehicle"}
+      ]
+    }
+  ]
+}

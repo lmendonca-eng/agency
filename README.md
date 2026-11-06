@@ -4,7 +4,10 @@ A Python web app that connects to Google Search Console via OAuth2 and provides:
 
 - **Dashboard** — clicks, impressions, CTR, and position trends with charts; top queries, pages, devices, and countries
 - **Report** — period-over-period comparison with the biggest query movers
-- **Opportunities** — automated analysis of quick wins, CTR gaps, content gaps, and striking-distance keywords
+- **Opportunities** — automated analysis of quick wins, CTR gaps, content gaps, and striking-distance keywords, with optional monthly search volume
+- **Published content** — clicks, impressions, CTR and position for the content pages we published for each client, vs. the previous period
+- **Client mapping** — Search Console properties are labeled with the client ID and name (filterable), from the private client roster
+- **CSV export** — every table can be downloaded as CSV
 
 Deployed as a Vercel serverless function.
 
@@ -50,6 +53,7 @@ vercel
 vercel env add GOOGLE_CLIENT_ID
 vercel env add GOOGLE_CLIENT_SECRET
 vercel env add JWT_SECRET
+vercel env add DATAFORSEO_AUTH   # optional, enables search volume on Opportunities
 
 # Deploy to production
 vercel --prod
@@ -82,7 +86,8 @@ vercel dev
 
 ```
 ├── api/
-│   └── index.py          # Flask-like serverless handler (OAuth + GSC API)
+│   ├── index.py          # Serverless handler (OAuth + GSC API)
+│   └── clients.example.json  # Format of the client roster (real one is private)
 ├── public/
 │   └── index.html         # Frontend SPA (vanilla JS + Chart.js)
 ├── vercel.json            # Vercel routing config
@@ -96,10 +101,19 @@ vercel dev
 |---|---|
 | `GOOGLE_CLIENT_ID` | OAuth2 client ID from Google Cloud Console |
 | `GOOGLE_CLIENT_SECRET` | OAuth2 client secret |
-| `JWT_SECRET` | Random string for signing session cookies |
+| `JWT_SECRET` | **Required.** Random string (16+ characters) used to encrypt session cookies. The app refuses to run without it |
+| `CLIENTS_JSON` | Client roster as JSON (format: `api/clients.example.json`). Kept in Vercel, not in this public repo. Locally you can use `api/clients.json` instead (git-ignored) |
+| `DATAFORSEO_AUTH` | Optional. Base64 of `login:password` for DataForSEO; enables the "Add monthly search volume" button on Opportunities |
+
+## Updating clients and tracked pages
+
+The roster lives in the `CLIENTS_JSON` environment variable in Vercel (or a git-ignored `api/clients.json` locally), so client names and domains are never committed to this public repo. Each client has an `id`, `name`, `domains` (matched against Search Console property hostnames, including `sc-domain:` properties), and `pages` (`path`, `month`, `title`, `type`) shown on the **Published content** tab. Add next month's pages there after they are published, then update the env var (`vercel env rm CLIENTS_JSON production && vercel env add CLIENTS_JSON production`) and redeploy.
 
 ## Notes
 
 - GSC data has a 2–3 day delay, so the app queries up to 3 days ago
+- Periods are exact (e.g. 28 days), and the comparison period is the 28 days immediately before, with no overlap
+- Totals and average position come straight from Search Console (impression-weighted), so they match the GSC UI
+- Session cookies are encrypted; Google tokens are never readable from the browser
 - The OAuth consent screen must be verified by Google for apps with more than 100 users
 - While in "Testing" mode, only users you add as test users can log in
